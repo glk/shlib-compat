@@ -1,0 +1,5 @@
+ABI compatibility checker for shared libraries with symbol versioning
+
+shlib-compat uses dwarf debugging symbols to recreate definitions of exported
+symbols, including function arguments and structural types.
+

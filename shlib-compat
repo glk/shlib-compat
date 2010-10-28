@@ -1,0 +1,811 @@
+#!/usr/bin/env python
+
+# Copyright (c) 2010 Gleb Kurtsou
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+import os
+import sys
+import re
+import json
+import optparse
+
+class Config(object):
+    version = '0.1'
+    # controlled by user
+    verbose = 0
+    dump = False
+    version_filter = None
+    symbol_filter = None
+    # misc opts
+    objdump = 'objdump'
+    dwarfdump = 'dwarfdump'
+    # debug
+    cmpcache_enabled = True
+    dwarfcache_enabled = True
+
+    @classmethod
+    def init(cls):
+        cls.version_filter = StrFilter()
+        cls.symbol_filter = StrFilter()
+
+# {{{ misc
+
+class StrFilter(object):
+    def __init__(self):
+        self.exclude = []
+        self.include = []
+
+    def compile(self):
+        self.re_exclude = [ re.compile(x) for x in self.exclude ]
+        self.re_include = [ re.compile(x) for x in self.include ]
+
+    def match(self, s):
+        if len(self.re_include):
+            matched = False
+            for r in self.re_include:
+                if r.match(s):
+                    matched = True
+                    break
+            if not matched:
+                return False
+        for r in self.re_exclude:
+            if r.match(s):
+                return False
+        return True
+
+class Cache(object):
+
+    class CacheStats(object):
+        def __init__(self):
+            self.hit = 0
+            self.miss = 0
+
+        def show(self, name):
+            total = self.hit + self.miss
+            if total == 0:
+                ratio = '(undef)'
+            else:
+                ratio = '%f' % (self.hit/float(total))
+            return '%s cache stats: hit: %d; miss: %d; ratio: %s' % \
+                    (name, self.hit, self.miss, ratio)
+
+    def __init__(self, enabled=True, stats=None):
+        self.enabled = enabled
+        self.items = {}
+        if stats == None:
+            self.stats = Cache.CacheStats()
+        else:
+            self.stats = stats
+
+    def get(self, id):
+        if self.enabled and self.items.has_key(id):
+            self.stats.hit += 1
+            return self.items[id]
+        else:
+            self.stats.miss += 1
+            return None
+
+    def put(self, id, obj):
+        if self.enabled:
+            if self.items.has_key(id) and obj is not self.items[id]:
+                #raise ValueError, "Item is already cached: %d (%s, %s)" % \
+                #        (id, self.items[id], obj)
+                print >> sys.stderr, "WARN: Item is already cached: %d (%s, %s)" % \
+                        (id, self.items[id], obj)
+            self.items[id] = obj
+
+    def replace(self, id, obj):
+        if self.enabled:
+            assert self.items.has_key(id)
+            self.items[id] = obj
+
+class ListDiff(object):
+    def __init__(self, orig, new):
+        self.orig = set(orig)
+        self.new = set(new)
+        self.common = self.orig & self.new
+        self.added = self.new - self.common
+        self.removed = self.orig - self.common
+
+# }}}
+
+#{{{ symbols and version maps
+
+class Symbol(object):
+    def __init__(self, name, offset, version, lib):
+        self.name = name
+        self.offset = offset
+        self.version = version
+        self.lib = lib
+        self.definition = None
+
+    @property
+    def name_ver(self):
+        return self.name + '@' + self.version
+
+    def __repr__(self):
+        return "Symbol(%s, 0x%x, %s)" % (self.name, self.offset, self.version)
+
+class CommonSymbol(object):
+    def __init__(self, origsym, newsym):
+        if origsym.name != newsym.name or origsym.version != newsym.version:
+            raise RuntimeError, "Symbols have different names:", [origsym, newsym]
+        self.origsym = origsym
+        self.newsym = newsym
+        self.name = newsym.name
+        self.version = newsym.version
+
+    def __repr__(self):
+        return "CommonSymbol(%s, %s)" % (self.name, self.version)
+
+class VersionMap(object):
+    def __init__(self, name):
+        self.name = name
+        self.symbols = {}
+
+    def append(self, symbol):
+        if (self.symbols.has_key(symbol.name)):
+            raise ValueError, "Symbol is already defined %s@@%s" % (symbol.name, self.name)
+        self.symbols[symbol.name] = symbol
+
+    def names(self):
+        return self.symbols.keys()
+
+    def __repr__(self):
+        return repr(self.symbols.values())
+
+# }}}
+
+# {{{ types and definitions
+
+class Def(object):
+    _is_alias = False
+
+    def __init__(self, id, name, **kwargs):
+        self.id = id
+        self.name = name
+        self.attrs = kwargs
+
+    def __getattr__(self, attr):
+        if not self.attrs.has_key(attr):
+            raise AttributeError
+        return self.attrs[attr]
+
+    def _alias(self):
+        if self._is_alias:
+            return self.type._alias()
+        return self
+
+    def __cmp__(self, other):
+        # TODO assert 'self' and 'other' belong to different libraries
+        #print 'cmp defs: %s, %s' % (self, other)
+        a = self._alias()
+        try:
+            b = other._alias()
+        except AttributeError:
+            return 1
+        r = cmp(a.__class__, b.__class__)
+        if r == 0:
+            if a.id != 0 and b.id != 0:
+                ind = (long(a.id) << 32) + b.id
+                r = Dwarf.cmpcache.get(ind)
+                if r != None:
+                    return r
+            else:
+                ind = 0
+            r = cmp(a.attrs, b.attrs)
+            if ind != 0:
+                Dwarf.cmpcache.put(ind, r)
+        else:
+            raise RuntimeError, 'Comparing different classes: %s, %s' % \
+                    (a.__class__.__name__, b.__class__.__name__)
+        return r
+
+    def __repr__(self):
+        p = []
+        if hasattr(self, 'name'):
+            p.append("name=%s" % self.name)
+        for (k, v) in self.attrs.items():
+            if isinstance(v, Def):
+                v = v.__class__.__name__ + '(...)'
+            p.append("%s=%s" % (k, v))
+        return self.__class__.__name__ + '(' + ', '.join(p) + ')'
+
+    @staticmethod
+    def serialize_any(obj):
+        if isinstance(obj, Def):
+            return obj.serialize()
+        elif type(obj) is list:
+            return [ Def.serialize_any(x) for x in obj ]
+        return obj
+
+    def serialize(self):
+        d = { '.name': self.name, '.tag': self.__class__.__name__ }
+        for (k, v) in self.attrs.items():
+            d[k] = Def.serialize_any(v)
+        return d
+
+class AnonymousDef(Def):
+    def __init__(self, id, **kwargs):
+        Def.__init__(self, id, None, **kwargs)
+
+class Void(AnonymousDef):
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(Void, cls).__new__(
+                    cls, *args, **kwargs)
+        return cls._instance
+
+    def __init__(self):
+        AnonymousDef.__init__(self, 0)
+
+class VarArgs(AnonymousDef):
+    pass
+
+class PointerDef(AnonymousDef):
+    pass
+
+class BaseTypeDef(Def):
+    pass
+
+class TypeAliasDef(Def):
+    _is_alias = True
+
+class EnumerationTypeDef(Def):
+    pass
+
+class ConstTypeDef(AnonymousDef):
+    _is_alias = True
+
+class VolatileTypeDef(AnonymousDef):
+    _is_alias = True
+
+class ArrayDef(AnonymousDef):
+    pass
+
+class ArraySubrangeDef(AnonymousDef):
+    pass
+
+class FunctionDef(Def):
+    pass
+
+class FunctionTypeDef(Def):
+    pass
+
+class ParameterDef(Def):
+    pass
+
+# TODO
+class StructForwardDef(Def):
+    pass
+
+class IncompleteDef(Def):
+    def update(self, complete, cache=None):
+        self.complete = complete
+        complete.incomplete = self
+        if cache != None:
+            cached = cache.get(self.id)
+            if cached != None and isinstance(cached, IncompleteDef):
+                cache.replace(self.id, complete)
+
+class StructIncompleteDef(IncompleteDef):
+    pass
+
+class UnionIncompleteDef(IncompleteDef):
+    pass
+
+class StructDef(Def):
+    pass
+
+class UnionDef(Def):
+    pass
+
+class MemberDef(Def):
+    pass
+
+class Dwarf(object):
+
+    cmpcache = Cache(enabled=Config.cmpcache_enabled)
+
+    def __init__(self, dump):
+        self.dump = dump
+
+    def _build_optarg_type(self, praw):
+        type = praw.optarg('type', Void())
+        if type != Void():
+            type = self.buildref(praw.unit, type)
+        return type
+
+    def build_subprogram(self, raw):
+        params = [ self.build(x) for x in raw.nested ]
+        result = self._build_optarg_type(raw)
+        return FunctionDef(raw.id, raw.name, params=params, result=result)
+
+    def build_subroutine_type(self, raw):
+        params = [ self.build(x) for x in raw.nested ]
+        result = self._build_optarg_type(raw)
+        return FunctionTypeDef(raw.id, raw.optname, params=params, result=result)
+
+    def build_formal_parameter(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        return ParameterDef(raw.id, raw.optname, type=type)
+
+    def build_pointer_type(self, raw):
+        type = self._build_optarg_type(raw)
+        return PointerDef(raw.id, type=type)
+
+    def build_member(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        return MemberDef(raw.id, raw.name, type=type)
+
+    def build_structure_type(self, raw):
+        incomplete = raw.unit.incomplete.get(raw.id)
+        if incomplete == None:
+            incomplete = StructIncompleteDef(raw.id, raw.optname)
+            raw.unit.incomplete.put(raw.id, incomplete)
+        else:
+            return incomplete
+        members = [ self.build(x) for x in raw.nested ]
+        byte_size = raw.optarg('byte_size', None)
+        if byte_size == None:
+            obj = StructForwardDef(raw.id, raw.name, members=members, \
+                    forcename=raw.name)
+        obj = StructDef(raw.id, raw.optname, members=members, \
+                byte_size=byte_size)
+        incomplete.update(obj, cache=raw.unit.cache)
+        return obj
+
+    def build_union_type(self, raw):
+        incomplete = raw.unit.incomplete.get(raw.id)
+        if incomplete == None:
+            incomplete = UnionIncompleteDef(raw.id, raw.optname)
+            raw.unit.incomplete.put(raw.id, incomplete)
+        else:
+            return incomplete
+        members = [ self.build(x) for x in raw.nested ]
+        byte_size = raw.optarg('byte_size', None)
+        obj = UnionDef(raw.id, raw.optname, members=members, \
+                byte_size=byte_size)
+        obj.incomplete = incomplete
+        incomplete.complete = obj
+        return obj
+
+    def build_typedef(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        return TypeAliasDef(raw.id, raw.name, type=type)
+
+    def build_const_type(self, raw):
+        type = self._build_optarg_type(raw)
+        return ConstTypeDef(raw.id, type=type)
+
+    def build_volatile_type(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        return VolatileTypeDef(raw.id, type=type)
+
+    def build_enumeration_type(self, raw):
+        # TODO handle DW_TAG_enumerator ???
+        return EnumerationTypeDef(raw.id, name=raw.optname, \
+                byte_size=raw.arg('byte_size'))
+
+    def build_base_type(self, raw):
+        return BaseTypeDef(raw.id, raw.optname, \
+                byte_size=raw.arg('byte_size'), encoding=raw.arg('encoding'))
+
+    def build_array_type(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        subranges = [ self.build(x) for x in raw.nested ]
+        return ArrayDef(raw.id, type=type, subranges=subranges)
+
+    def build_subrange_type(self, raw):
+        type = self.buildref(raw.unit, raw.arg('type'))
+        return ArraySubrangeDef(raw.id, type=type, \
+                upper_bound=raw.arg('upper_bound'))
+
+    def build_unspecified_parameters(self, raw):
+        return VarArgs(raw.id)
+
+    def _get_id(self, id):
+        try:
+            return int(id)
+        except ValueError:
+            if (id.startswith('<') and id.endswith('>')):
+                return int(id[1:-1])
+            else:
+                raise ValueError, "Invalid dwarf id: %s" % id
+
+    def build(self, raw):
+        obj = raw.unit.cache.get(raw.id)
+        if obj != None:
+            return obj
+        builder_name = raw.tag.replace('DW_TAG_', 'build_')
+        try:
+            builder = getattr(self, builder_name)
+        except AttributeError:
+            raise AttributeError, "Unknown dwarf tag: %s" % raw
+        obj = builder(raw)
+        raw.unit.cache.put(obj.id, obj)
+        return obj
+
+    def buildref(self, unit, id):
+        id = self._get_id(id)
+        raw = unit.tags[id]
+        obj = self.build(raw)
+        return obj
+
+# }}}
+
+class Shlib(object):
+    def __init__(self, libfile):
+        self.libfile = libfile
+        self.versions = {}
+
+    def parse_objdump(self):
+        objdump = ObjdumpParser(self.libfile)
+        objdump.run()
+        for p in objdump.dynamic_symbols:
+            vername = p['ver']
+            if vername.startswith('(') and vername.endswith(')'):
+                vername = vername[1:-1]
+            if not Config.version_filter.match(vername):
+                continue
+            if not Config.symbol_filter.match(p['symbol']):
+                continue
+            sym = Symbol(p['symbol'], p['offset'], vername, self)
+            if not self.versions.has_key(vername):
+                self.versions[vername] = VersionMap(vername)
+            self.versions[vername].append(sym)
+
+    def parse_dwarfdump(self):
+        dwarfdump = DwarfdumpParser(self.libfile)
+        dwarfdump.run()
+        dwarf = Dwarf(dwarfdump)
+        for ver in self.versions.values():
+            for sym in ver.symbols.values():
+                try:
+                    raw = dwarfdump.offsetmap[sym.offset]
+                except:
+                    print >> sys.stderr, "WARN: Symbol %s (%s) wan't found at offset 0x%x" % \
+                            (sym.name_ver, self.libfile, sym.offset)
+                    continue
+                if Config.verbose > 1:
+                    print "Parse symbol %s (%s)" % (sym.name_ver, self.libfile)
+                sym.definition = dwarf.build(raw)
+
+    def parse(self):
+        self.parse_objdump()
+        self.parse_dwarfdump()
+
+# {{{ parsers
+
+class Parser(object):
+    def __init__(self, proc):
+        self.proc = proc
+        self.parser = self.parse_begin
+
+    def run(self):
+        fd = os.popen(self.proc, 'r')
+        while True:
+            line = fd.readline()
+            if (not line):
+                break
+            line = line.strip()
+            if (line):
+                self.parser(line)
+
+    def parse_begin(self, line):
+        print(line)
+
+class ObjdumpParser(Parser):
+
+    re_header = re.compile('(?P<table>\w*)\s*SYMBOL TABLE:')
+
+    re_local_symbol = re.compile('(?P<offset>[0-9a-fA-F]+)\s+(?P<bind>\w+)\s+(?P<type>\w+)\s+(?P<section>[^\s]+)\s+(?P<foffset>[0-9a-fA-F]+)\s*(?P<symbol>[^\s]*)')
+    re_lame_symbol = re.compile('(?P<offset>[0-9a-fA-F]+)\s+(?P<bind>\w+)\s+\*[A-Z]+\*')
+
+    re_dynamic_symbol = re.compile('(?P<offset>[0-9a-fA-F]+)\s+(?P<bind>\w+)\s+(?P<type>\w+)\s+(?P<section>[^\s]+)\s+(?P<foffset>[0-9a-fA-F]+)\s*(?P<ver>[^\s]*)\s*(?P<symbol>[^\s]*)')
+
+    def __init__(self, libfile):
+        Parser.__init__(self, "%s -wT %s" % (Config.objdump, libfile))
+        self.dynamic_symbols = []
+        self.local_symbols = []
+
+    def parse_begin(self, line):
+        self.parse_header(line)
+
+    def add_symbol(self, table, symbol):
+        offset = int(symbol['offset'], 16);
+        symbol['offset'] = offset
+        if (offset == 0):
+            return
+        table.append(symbol)
+
+    def parse_header(self, line):
+        m = self.re_header.match(line)
+        if (m):
+            table = m.group('table')
+            if (table == "DYNAMIC"):
+                self.parser = self.parse_dynamic
+            elif table == '':
+                self.parser = self.parse_local
+            else:
+                raise ValueError, "Invalid symbol table: %s" % table
+            return True
+        return False
+
+    def parse_local(self, line):
+        if (self.parse_header(line)):
+            return
+        if (self.re_lame_symbol.match(line)):
+            return
+        m = self.re_local_symbol.match(line)
+        if (not m):
+                raise ValueError, "Invalid symbol definition: %s" % line
+        p = m.groupdict()
+        if (p['symbol'] and p['symbol'].find('@') == -1):
+            self.add_symbol(self.local_symbols, p);
+
+    def parse_dynamic(self, line):
+        if (self.parse_header(line)):
+            return
+        if (self.re_lame_symbol.match(line)):
+            return
+        m = self.re_dynamic_symbol.match(line)
+        if (not m):
+                raise ValueError, "Invalid symbol definition: %s" % line
+        p = m.groupdict()
+        if (p['symbol'] and p['ver']):
+            self.add_symbol(self.dynamic_symbols, p);
+
+class DwarfdumpParser(Parser):
+
+    tagcache_stats = Cache.CacheStats()
+
+    class Unit(object):
+        def __init__(self):
+            self.cache = Cache(enabled=Config.dwarfcache_enabled, \
+                    stats=DwarfdumpParser.tagcache_stats)
+            self.incomplete = Cache()
+            self.tags = {}
+
+    class Tag(object):
+        def __init__(self, unit, data):
+            self.unit = unit
+            self.id = int(data['id'])
+            self.level = int(data['level'])
+            self.tag = data['tag']
+            self.args = {}
+            self.nested = []
+
+        @property
+        def name(self):
+            return self.arg('name')
+
+        @property
+        def optname(self):
+            return self.optarg('name', None)
+
+        def arg(self, a):
+            name = 'DW_AT_' + a
+            try:
+                return self.args[name]
+            except KeyError:
+                raise KeyError, "Argument '%s' not found in %s: %s" % (name, self, self.args)
+
+        def optarg(self, a, default):
+            try:
+                return self.arg(a)
+            except KeyError:
+                return default
+
+        def __repr__(self):
+            return "Tag(%d, %d, %s)" % (self.level, self.id, self.tag)
+
+    re_header = re.compile('<(?P<level>\d+)><(?P<id>\d+\+*\d*)><(?P<tag>\w+)>')
+    re_argname = re.compile('(?P<arg>\w+)<')
+
+    skip_tags = set([
+        'DW_TAG_lexical_block',
+        'DW_TAG_inlined_subroutine',
+        'DW_TAG_label',
+        'DW_TAG_variable',
+        ])
+
+    def __init__(self, libfile):
+        Parser.__init__(self, "%s -di %s" % (Config.dwarfdump, libfile))
+        self.current_unit = None
+        self.offsetmap = {}
+        self.stack = []
+
+    def parse_begin(self, line):
+        if line == '.debug_info':
+            self.parser = self.parse_debuginfo
+        else:
+            raise ValueError, "Invalid dwarfdump header: %s" % line
+
+    def parse_argvalue(self, args):
+        assert args.startswith('<')
+        i = 1
+        cnt = 1
+        while i < len(args) and args[i]:
+            if args[i] == '<':
+                cnt += 1
+            elif args[i] == '>':
+                cnt -= 1
+                if cnt == 0:
+                    break
+            i = i + 1
+        value = args[1:i]
+        args = args[i+1:]
+        return (args, value)
+
+    def parse_arg(self, tag, args):
+        m = self.re_argname.match(args)
+        if not m:
+            raise ValueError, "Invalid dwarfdump: couldn't parse arguments: %s" % args
+        argname = m.group('arg')
+        args = args[len(argname):]
+        value = []
+        while len(args) > 0 and args.startswith('<'):
+            (args, v) = self.parse_argvalue(args)
+            value.append(v)
+        args = args.lstrip()
+        if len(value) == 1:
+            value = value[0]
+        tag.args[argname] = value
+        return args
+
+    def parse_debuginfo(self, line):
+        m = self.re_header.match(line)
+        if not m:
+            raise ValueError, "Invalid dwarfdump: %s" % line
+        if m.group('level') == '0':
+            self.current_unit = DwarfdumpParser.Unit()
+            return
+        tag = DwarfdumpParser.Tag(self.current_unit, m.groupdict())
+        args = line[len(m.group(0)):].lstrip()
+        while args:
+            args = self.parse_arg(tag, args)
+        tag.unit.tags[tag.id] = tag
+        if tag.args.has_key('DW_AT_low_pc') and \
+                tag.tag not in DwarfdumpParser.skip_tags:
+            offset = int(tag.args['DW_AT_low_pc'], 16)
+            if self.offsetmap.has_key(offset):
+                raise ValueError, "Dwarf dump parse error: " + \
+                        "symbol is aleady defined at offset 0x%x" % offset
+            self.offsetmap[offset] = tag
+        if len(self.stack) > 0:
+            prev = self.stack.pop()
+            while prev.level >= tag.level and len(self.stack) > 0:
+                prev = self.stack.pop()
+            if prev.level < tag.level:
+                assert prev.level == tag.level - 1
+                # TODO check DW_AT_sibling ???
+                if tag.tag not in DwarfdumpParser.skip_tags:
+                    prev.nested.append(tag)
+                self.stack.append(prev)
+        self.stack.append(tag)
+        assert len(self.stack) == tag.level
+
+# }}}
+
+def list_str(l):
+    l = [ str(x) for x in l ]
+    l.sort()
+    return ', '.join(l)
+
+def names_ver_str(vername, names):
+    return list_str([ x + "@" + vername for x in names ])
+
+def common_symbols(origlib, newlib):
+    result = []
+    verdiff = ListDiff(origlib.versions.keys(), newlib.versions.keys())
+    if Config.verbose > 0:
+        print 'Original versions:   ', list_str(verdiff.orig)
+        print 'New versions:        ', list_str(verdiff.new)
+    for vername in verdiff.added:
+        print 'Added version:       ', vername
+        print '    Added symbols:   ', \
+                names_ver_str(vername, newlib.versions[vername].names())
+    for vername in verdiff.removed:
+        print 'Removed version:     ', vername
+        print '    Removed symbols: ', \
+                names_ver_str(vername, origlib.versions[vername].names())
+    for vername in verdiff.common:
+        origver = origlib.versions[vername]
+        newver = newlib.versions[vername]
+        namediff = ListDiff(origver.names(), newver.names())
+        if namediff.added or namediff.removed:
+            print 'Added symbols:    ', \
+                    names_ver_str(vername, namediff.added)
+            print 'Removed symbols:  ', \
+                    names_ver_str(vername, namediff.removed)
+        commonver = VersionMap(vername)
+        result.append(commonver)
+        for n in namediff.common:
+            sym = CommonSymbol(origver.symbols[n], newver.symbols[n])
+            commonver.append(sym)
+    return result
+
+def cmp_symbols(commonver):
+    for ver in commonver:
+        names = ver.names();
+        names.sort()
+        for symname in names:
+            sym = ver.symbols[symname]
+            match = sym.origsym.definition == sym.newsym.definition
+            if Config.verbose or not match:
+                print '==== %s: definitions%s match' % \
+                        (sym.origsym.name_ver, "" if match else " don't")
+                if Config.dump and not match:
+                    for xsym in [sym.origsym, sym.newsym]:
+                        print '---- %s %s:' % \
+                                (xsym.name_ver, xsym.lib.libfile)
+                        print json.dump(xsym.definition.serialize(), sys.stdout)
+
+
+if __name__ == '__main__':
+    Config.init()
+    parser = optparse.OptionParser(usage="usage: %prog origlib newlib", \
+            version="%prog " + Config.version)
+    parser.add_option('-v', '--verbose', action='count', \
+            help="verbose mode, may be specified several times")
+    parser.add_option('--dump', action='store_true', \
+            help="dump json representation if symbol definitions don't match")
+    parser.add_option('--exclude-ver', action='append', metavar="re")
+    parser.add_option('--include-ver', action='append', metavar="re")
+    parser.add_option('--exclude-sym', action='append', metavar="re")
+    parser.add_option('--include-sym', action='append', metavar="re")
+    (opts, args) = parser.parse_args()
+
+    if len(args) != 2:
+        parser.print_help()
+        sys.exit(-1)
+    if opts.verbose:
+        Config.verbose = opts.verbose
+    if opts.dump:
+        Config.verbose = opts.dump
+    for (k, v) in ({ '_sym': Config.symbol_filter, \
+            '_ver': Config.version_filter }).items():
+        for a in [ 'exclude', 'include' ]:
+            opt = getattr(opts, a + k)
+            if opt:
+                getattr(v, a).extend(opt)
+    Config.version_filter.compile()
+    Config.symbol_filter.compile()
+
+    (origfile, newfile) = (args[0], args[1])
+
+    origlib = Shlib(origfile)
+    origlib.parse()
+    newlib = Shlib(newfile)
+    newlib.parse()
+
+    commonver = common_symbols(origlib, newlib)
+    cmp_symbols(commonver)
+    if Config.verbose > 2:
+        print Dwarf.cmpcache.stats.show('Cmp')
+        print DwarfdumpParser.tagcache_stats.show('Dwarf tag')
+
