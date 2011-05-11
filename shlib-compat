@@ -128,6 +128,24 @@ class ListDiff(object):
         self.added = self.new - self.common
         self.removed = self.orig - self.common
 
+class PrettyPrinter(object):
+    def __init__(self):
+        self.stack = []
+
+    def run_nested(self, obj):
+        ex = obj._pp_ex(self)
+        self.stack.append(ex)
+
+    def run(self, obj):
+        self._result = obj._pp(self)
+        return self._result
+
+    def nested(self):
+        return sorted(set(self.stack))
+
+    def result(self):
+        return self._result;
+
 # }}}
 
 #{{{ symbols and version maps
@@ -192,6 +210,11 @@ class Def(object):
             raise AttributeError('%s in %s' % (attr, str(self)))
         return self.attrs[attr]
 
+    def _name_opt(self, default=''):
+        if not self.name:
+            return default
+        return self.name
+
     def _alias(self):
         if self._is_alias:
             return self.type._alias()
@@ -239,12 +262,22 @@ class Def(object):
         elif type(obj) is list:
             return [ Def.serialize_any(x) for x in obj ]
         return obj
+    def _mapval(self, param, vals):
+        if param not in vals.keys():
+            raise NotImplementedError("invalid value '%s': %s" %
+                    (param, str(self)))
+        return vals[param]
 
     def serialize(self):
         d = { '.name': self.name, '.tag': self.__class__.__name__ }
         for (k, v) in self.attrs.items():
             d[k] = Def.serialize_any(v)
         return d
+    def _pp_ex(self, pp):
+        raise NotImplementedError('extended pretty print not implemeted for ' + str(self))
+
+    def _pp(self, pp):
+        raise NotImplementedError('pretty print not implemeted for ' + str(self))
 
 class AnonymousDef(Def):
     def __init__(self, id, **kwargs):
@@ -262,41 +295,94 @@ class Void(AnonymousDef):
     def __init__(self):
         AnonymousDef.__init__(self, 0)
 
+    def _pp(self, pp):
+        return "void"
+
 class VarArgs(AnonymousDef):
-    pass
+    def _pp(self, pp):
+        return "..."
 
 class PointerDef(AnonymousDef):
-    pass
+    def _pp(self, pp):
+        t = pp.run(self.type)
+        return "%s*" % (t,)
 
 class BaseTypeDef(Def):
-    pass
+    def _pp(self, pp):
+        if self.encoding in ['DW_ATE_signed', 'DW_ATE_unsigned', 'DW_ATE_unsigned_char' ]:
+            sign = '' if self.encoding == 'DW_ATE_signed' else 'u'
+            bits = int(self.byte_size) * 8
+            return '%sint%s_t' % (sign, bits)
+        elif self.encoding == 'DW_ATE_signed_char' and int(self.byte_size) == 1:
+            return 'char';
+        elif self.encoding == 'DW_ATE_float':
+            return self._mapval(self.byte_size, {
+                '16': 'long double',
+                '8': 'double',
+                '4': 'float',
+            })
+        raise NotImplementedError('invalid encoding: %s' % str(self))
 
 class TypeAliasDef(Def):
     _is_alias = True
+    def _pp(self, pp):
+        alias = self._alias()
+        # push typedef name
+        if self.name and not alias.name:
+            alias.name = 'T(%s)' % self.name
+        # return type with modifiers
+        return self.type._pp(pp)
 
 class EnumerationTypeDef(Def):
-    pass
+    def _pp(self, pp):
+        return 'enum ' + self._name_opt('UNKNOWN')
 
 class ConstTypeDef(AnonymousDef):
     _is_alias = True
+    def _pp(self, pp):
+        return 'const ' + self.type._pp(pp)
 
 class VolatileTypeDef(AnonymousDef):
     _is_alias = True
+    def _pp(self, pp):
+        return 'volatile ' + self.type._pp(pp)
 
 class ArrayDef(AnonymousDef):
-    pass
+    def _pp(self, pp):
+        t = pp.run(self.type)
+        assert len(self.subranges) == 1
+        try:
+            sz = int(self.subranges[0].upper_bound) + 1
+        except ValueError:
+            s = re.sub(r'\(.+\)', '', self.subranges[0].upper_bound)
+            sz = int(s) + 1
+        return '%s[%s]' % (t, sz)
 
 class ArraySubrangeDef(AnonymousDef):
     pass
 
 class FunctionDef(Def):
-    pass
+    def _pp(self, pp):
+        result = pp.run(self.result)
+        if not self.params:
+            params = "void"
+        else:
+            params = ', '.join([ pp.run(x) for x in self.params ])
+        return "%s %s(%s);" % (result, self.name, params)
 
 class FunctionTypeDef(Def):
-    pass
+    def _pp(self, pp):
+        result = pp.run(self.result)
+        if not self.params:
+            params = "void"
+        else:
+            params = ', '.join([ pp.run(x) for x in self.params ])
+        return "F(%s, %s, (%s))" % (self._name_opt(), result, params)
 
 class ParameterDef(Def):
-    pass
+    def _pp(self, pp):
+        t = pp.run(self.type)
+        return "%s %s" % (t, self._name_opt())
 
 # TODO
 class StructForwardDef(Def):
@@ -312,19 +398,41 @@ class IncompleteDef(Def):
                 cache.replace(self.id, complete)
 
 class StructIncompleteDef(IncompleteDef):
-    pass
+    def _pp(self, pp):
+        return "struct %s" % (self.name,)
 
 class UnionIncompleteDef(IncompleteDef):
-    pass
+    def _pp(self, pp):
+        return "union %s" % (self.name,)
 
 class StructDef(Def):
-    pass
+    def _pp_ex(self, pp, suffix=';'):
+        members = [ pp.run(x) for x in self.members ]
+        return "struct %s { %s }%s" % \
+                (self._name_opt(), ' '.join(members), suffix)
+    def _pp(self, pp):
+        if self.name:
+            pp.run_nested(self)
+            return "struct %s" % (self.name,)
+        else:
+            return self._pp_ex(pp, suffix='')
 
 class UnionDef(Def):
-    pass
+    def _pp_ex(self, pp, suffix=';'):
+        members = [ pp.run(x) for x in self.members ]
+        return "union %s { %s }%s" % \
+                (self._name_opt(), ' '.join(members), suffix)
+    def _pp(self, pp):
+        if self.name:
+            pp.run_nested(self)
+            return "union %s" % (self.name,)
+        else:
+            return self._pp_ex(pp, suffix='')
 
 class MemberDef(Def):
-    pass
+    def _pp(self, pp):
+        t = pp.run(self.type)
+        return "%s %s;" % (t, self._name_opt())
 
 class Dwarf(object):
 
