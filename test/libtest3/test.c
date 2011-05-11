@@ -20,11 +20,13 @@ struct s3 {
 	uint32_t	f2_int32;
 };
 
+typedef int i32;
+
 int	func1(int a, int b);
 int	func2(int64_t a, uint64_t b);
 void	func3(struct s1 *s);
 void	func4(struct s1 s);
-int	func5(int a, void *b, struct s2 *s);
+int32_t	func5(i32 a, void *b, struct s2 *s);
 int	func6(char a, struct s3 *s);
 
 int
