@@ -889,8 +889,8 @@ def dump_symbols(commonver):
             self.pp = PrettyPrinter()
             self.res = []
         def run(self, sym):
-            r = self.pp.run(sym)
-            self.res.append(r)
+            r = self.pp.run(sym.definition)
+            self.res.append('/* %s@%s */ %s' % (sym.name, sym.version, r))
         def finish(self):
             print >> self.io_conf.out, '\n// Symbol dump: version %s, library %s' % \
                     (ver.name, self.io_conf.filename)
@@ -910,8 +910,8 @@ def dump_symbols(commonver):
                 print >> sys.stderr, 'WARN: Missing symbol definition: %s@%s' % \
                         (symname, ver.name)
                 continue
-            d_orig.run(sym.origsym.definition)
-            d_new.run(sym.newsym.definition)
+            d_orig.run(sym.origsym)
+            d_new.run(sym.newsym)
         d_orig.finish()
         d_new.finish()
 
