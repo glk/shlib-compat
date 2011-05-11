@@ -900,6 +900,11 @@ def dump_symbols(commonver):
         d_new = SymbolDump(Config.newfile)
         for symname in names:
             sym = ver.symbols[symname]
+            if not sym.origsym.definition or not sym.newsym.definition:
+                # XXX
+                print >> sys.stderr, 'WARN: Missing symbol definition: %s@%s' % \
+                        (symname, ver.name)
+                continue
             d_orig.run(sym.origsym.definition)
             d_new.run(sym.newsym.definition)
         d_orig.finish()
