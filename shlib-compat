@@ -189,7 +189,7 @@ class Def(object):
 
     def __getattr__(self, attr):
         if not self.attrs.has_key(attr):
-            raise AttributeError
+            raise AttributeError('%s in %s' % (attr, str(self)))
         return self.attrs[attr]
 
     def _alias(self):
