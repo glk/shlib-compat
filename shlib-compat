@@ -27,7 +27,6 @@
 import os
 import sys
 import re
-import json
 import optparse
 
 class Config(object):
@@ -255,24 +254,12 @@ class Def(object):
             p.append("%s=%s" % (k, v))
         return self.__class__.__name__ + '(' + ', '.join(p) + ')'
 
-    @staticmethod
-    def serialize_any(obj):
-        if isinstance(obj, Def):
-            return obj.serialize()
-        elif type(obj) is list:
-            return [ Def.serialize_any(x) for x in obj ]
-        return obj
     def _mapval(self, param, vals):
         if param not in vals.keys():
             raise NotImplementedError("invalid value '%s': %s" %
                     (param, str(self)))
         return vals[param]
 
-    def serialize(self):
-        d = { '.name': self.name, '.tag': self.__class__.__name__ }
-        for (k, v) in self.attrs.items():
-            d[k] = Def.serialize_any(v)
-        return d
     def _pp_ex(self, pp):
         raise NotImplementedError('extended pretty print not implemeted for ' + str(self))
 
