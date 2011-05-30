@@ -43,6 +43,16 @@ class Config(object):
     cmpcache_enabled = True
     dwarfcache_enabled = True
 
+    class FileConfig(object):
+        filename = None
+        out = sys.stdout
+        def init(self, outname):
+            if outname and outname != '-':
+                self.out = open(outname, "w")
+
+    origfile = FileConfig()
+    newfile = FileConfig()
+
     @classmethod
     def init(cls):
         cls.version_filter = StrFilter()
@@ -855,33 +865,76 @@ def cmp_symbols(commonver):
                 print '%s: definitions %smatch' % \
                         (sym.origsym.name_ver, "" if match else "mis")
                 if Config.dump and not match:
-                    for xsym in [sym.origsym, sym.newsym]:
-                        print '---- %s %s:' % \
+                    for x in [(sym.origsym, Config.origfile),
+                            (sym.newsym, Config.newfile)]:
+                        xsym = x[0]
+                        xout = x[1].out
+                        print >> xout, '\n// Definitions mismatch: %s %s' % \
                                 (xsym.name_ver, xsym.lib.libfile)
-                        print json.dump(xsym.definition.serialize(), sys.stdout)
+                        pp = PrettyPrinter()
+                        pp.run(xsym.definition)
+                        for i in pp.nested():
+                            print >> xout, i
+                        print >> xout, pp.result()
 
+def dump_symbols(commonver):
+    class SymbolDump(object):
+        def __init__(self, io_conf):
+            self.io_conf = io_conf
+            self.pp = PrettyPrinter()
+            self.res = []
+        def run(self, sym):
+            r = self.pp.run(sym)
+            self.res.append(r)
+        def finish(self):
+            print >> self.io_conf.out, '\n// Symbol dump: version %s, library %s' % \
+                    (ver.name, self.io_conf.filename)
+            for i in self.pp.nested():
+                print >> self.io_conf.out, i
+            print >> self.io_conf.out, ''
+            for i in self.res:
+                print >> self.io_conf.out, i
+    for ver in commonver:
+        names = sorted(ver.names());
+        d_orig = SymbolDump(Config.origfile)
+        d_new = SymbolDump(Config.newfile)
+        for symname in names:
+            sym = ver.symbols[symname]
+            d_orig.run(sym.origsym.definition)
+            d_new.run(sym.newsym.definition)
+        d_orig.finish()
+        d_new.finish()
 
 if __name__ == '__main__':
     Config.init()
-    parser = optparse.OptionParser(usage="usage: %prog origlib newlib", \
+    parser = optparse.OptionParser(usage="usage: %prog origlib newlib",
             version="%prog " + Config.version)
-    parser.add_option('-v', '--verbose', action='count', \
+    parser.add_option('-v', '--verbose', action='count',
             help="verbose mode, may be specified several times")
-    parser.add_option('--dump', action='store_true', \
-            help="dump json representation if symbol definitions don't match")
-    parser.add_option('--exclude-ver', action='append', metavar="re")
-    parser.add_option('--include-ver', action='append', metavar="re")
-    parser.add_option('--exclude-sym', action='append', metavar="re")
-    parser.add_option('--include-sym', action='append', metavar="re")
+    parser.add_option('--dump', action='store_true',
+            help="dump symbol definitions")
+    parser.add_option('--out-orig', action='store',
+            help="result output file for original library", metavar="ORIGFILE")
+    parser.add_option('--out-new', action='store',
+            help="result output file for new library", metavar="NEWFILE")
+    parser.add_option('--exclude-ver', action='append', metavar="RE")
+    parser.add_option('--include-ver', action='append', metavar="RE")
+    parser.add_option('--exclude-sym', action='append', metavar="RE")
+    parser.add_option('--include-sym', action='append', metavar="RE")
     (opts, args) = parser.parse_args()
 
     if len(args) != 2:
         parser.print_help()
         sys.exit(-1)
+    if opts.out_orig:
+        Config.origfile.init(opts.out_orig)
+    if opts.out_new:
+        Config.newfile.init(opts.out_new)
+    if opts.dump:
+        Config.dump = True
+        Config.verbose = 1
     if opts.verbose:
         Config.verbose = opts.verbose
-    if opts.dump:
-        Config.verbose = opts.dump
     for (k, v) in ({ '_sym': Config.symbol_filter, \
             '_ver': Config.version_filter }).items():
         for a in [ 'exclude', 'include' ]:
@@ -891,14 +944,16 @@ if __name__ == '__main__':
     Config.version_filter.compile()
     Config.symbol_filter.compile()
 
-    (origfile, newfile) = (args[0], args[1])
+    (Config.origfile.filename, Config.newfile.filename) = (args[0], args[1])
 
-    origlib = Shlib(origfile)
+    origlib = Shlib(Config.origfile.filename)
     origlib.parse()
-    newlib = Shlib(newfile)
+    newlib = Shlib(Config.newfile.filename)
     newlib.parse()
 
     commonver = common_symbols(origlib, newlib)
+    if Config.dump:
+        dump_symbols(commonver)
     cmp_symbols(commonver)
     if Config.verbose >= 4:
         print Dwarf.cmpcache.stats.show('Cmp')
