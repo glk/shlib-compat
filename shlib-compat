@@ -118,8 +118,8 @@ class Cache(object):
     def put(self, id, obj):
         if self.enabled:
             if self.items.has_key(id) and obj is not self.items[id]:
-                #raise ValueError, "Item is already cached: %d (%s, %s)" % \
-                #        (id, self.items[id], obj)
+                #raise ValueError("Item is already cached: %d (%s, %s)" %
+                #        (id, self.items[id], obj))
                 print >> sys.stderr, "WARN: Item is already cached: %d (%s, %s)" % \
                         (id, self.items[id], obj)
             self.items[id] = obj
@@ -177,7 +177,8 @@ class Symbol(object):
 class CommonSymbol(object):
     def __init__(self, origsym, newsym):
         if origsym.name != newsym.name or origsym.version != newsym.version:
-            raise RuntimeError, "Symbols have different names:", [origsym, newsym]
+            raise RuntimeError("Symbols have different names: %s",
+                    [origsym, newsym])
         self.origsym = origsym
         self.newsym = newsym
         self.name = newsym.name
@@ -193,7 +194,8 @@ class VersionMap(object):
 
     def append(self, symbol):
         if (self.symbols.has_key(symbol.name)):
-            raise ValueError, "Symbol is already defined %s@@%s" % (symbol.name, self.name)
+            raise ValueError("Symbol is already defined %s@%s" %
+                    (symbol.name, self.name))
         self.symbols[symbol.name] = symbol
 
     def names(self):
@@ -250,8 +252,8 @@ class Def(object):
             if ind != 0:
                 Dwarf.cmpcache.put(ind, r)
         else:
-            raise RuntimeError, 'Comparing different classes: %s, %s' % \
-                    (a.__class__.__name__, b.__class__.__name__)
+            raise RuntimeError('Comparing different classes: %s, %s' %
+                    (a.__class__.__name__, b.__class__.__name__))
         return r
 
     def __repr__(self):
@@ -266,15 +268,16 @@ class Def(object):
 
     def _mapval(self, param, vals):
         if param not in vals.keys():
-            raise NotImplementedError("invalid value '%s': %s" %
+            raise NotImplementedError("Invalid value '%s': %s" %
                     (param, str(self)))
         return vals[param]
 
     def _pp_ex(self, pp):
-        raise NotImplementedError('extended pretty print not implemeted for ' + str(self))
+        raise NotImplementedError('Extended pretty print not implemeted: %s' %
+                str(self))
 
     def _pp(self, pp):
-        raise NotImplementedError('pretty print not implemeted for ' + str(self))
+        raise NotImplementedError('Pretty print not implemeted: %s' % str(self))
 
 class AnonymousDef(Def):
     def __init__(self, id, **kwargs):
@@ -318,7 +321,7 @@ class BaseTypeDef(Def):
                 '8': 'double',
                 '4': 'float',
             })
-        raise NotImplementedError('invalid encoding: %s' % str(self))
+        raise NotImplementedError('Invalid encoding: %s' % self)
 
 class TypeAliasDef(Def):
     _is_alias = True
@@ -476,9 +479,9 @@ class Dwarf(object):
         members = [ self.build(x) for x in raw.nested ]
         byte_size = raw.optarg('byte_size', None)
         if byte_size == None:
-            obj = StructForwardDef(raw.id, raw.name, members=members, \
+            obj = StructForwardDef(raw.id, raw.name, members=members,
                     forcename=raw.name)
-        obj = StructDef(raw.id, raw.optname, members=members, \
+        obj = StructDef(raw.id, raw.optname, members=members,
                 byte_size=byte_size)
         incomplete.update(obj, cache=raw.unit.cache)
         return obj
@@ -492,7 +495,7 @@ class Dwarf(object):
             return incomplete
         members = [ self.build(x) for x in raw.nested ]
         byte_size = raw.optarg('byte_size', None)
-        obj = UnionDef(raw.id, raw.optname, members=members, \
+        obj = UnionDef(raw.id, raw.optname, members=members,
                 byte_size=byte_size)
         obj.incomplete = incomplete
         incomplete.complete = obj
@@ -512,11 +515,11 @@ class Dwarf(object):
 
     def build_enumeration_type(self, raw):
         # TODO handle DW_TAG_enumerator ???
-        return EnumerationTypeDef(raw.id, name=raw.optname, \
+        return EnumerationTypeDef(raw.id, name=raw.optname,
                 byte_size=raw.arg('byte_size'))
 
     def build_base_type(self, raw):
-        return BaseTypeDef(raw.id, raw.optname, \
+        return BaseTypeDef(raw.id, raw.optname,
                 byte_size=raw.arg('byte_size'), encoding=raw.arg('encoding'))
 
     def build_array_type(self, raw):
@@ -526,7 +529,7 @@ class Dwarf(object):
 
     def build_subrange_type(self, raw):
         type = self.buildref(raw.unit, raw.arg('type'))
-        return ArraySubrangeDef(raw.id, type=type, \
+        return ArraySubrangeDef(raw.id, type=type,
                 upper_bound=raw.arg('upper_bound'))
 
     def build_unspecified_parameters(self, raw):
@@ -539,7 +542,7 @@ class Dwarf(object):
             if (id.startswith('<') and id.endswith('>')):
                 return int(id[1:-1])
             else:
-                raise ValueError, "Invalid dwarf id: %s" % id
+                raise ValueError("Invalid dwarf id: %s" % id)
 
     def build(self, raw):
         obj = raw.unit.cache.get(raw.id)
@@ -549,7 +552,7 @@ class Dwarf(object):
         try:
             builder = getattr(self, builder_name)
         except AttributeError:
-            raise AttributeError, "Unknown dwarf tag: %s" % raw
+            raise AttributeError("Unknown dwarf tag: %s" % raw)
         obj = builder(raw)
         raw.unit.cache.put(obj.id, obj)
         return obj
@@ -592,11 +595,11 @@ class Shlib(object):
                 try:
                     raw = dwarfdump.offsetmap[sym.offset]
                 except:
-                    print >> sys.stderr, "WARN: Symbol %s (%s) wan't found at offset 0x%x" % \
+                    print >> sys.stderr, "WARN: Symbol %s (%s) not found at offset 0x%x" % \
                             (sym.name_ver, self.libfile, sym.offset)
                     continue
                 if Config.verbose >= 3:
-                    print "Parse symbol %s (%s)" % (sym.name_ver, self.libfile)
+                    print "Parsing symbol %s (%s)" % (sym.name_ver, self.libfile)
                 sym.definition = dwarf.build(raw)
 
     def parse(self):
@@ -656,7 +659,7 @@ class ObjdumpParser(Parser):
             elif table == '':
                 self.parser = self.parse_local
             else:
-                raise ValueError, "Invalid symbol table: %s" % table
+                raise ValueError("Invalid symbol table: %s" % table)
             return True
         return False
 
@@ -667,7 +670,7 @@ class ObjdumpParser(Parser):
             return
         m = self.re_local_symbol.match(line)
         if (not m):
-                raise ValueError, "Invalid symbol definition: %s" % line
+            raise ValueError("Invalid symbol definition: %s" % line)
         p = m.groupdict()
         if (p['symbol'] and p['symbol'].find('@') == -1):
             self.add_symbol(self.local_symbols, p);
@@ -679,7 +682,7 @@ class ObjdumpParser(Parser):
             return
         m = self.re_dynamic_symbol.match(line)
         if (not m):
-                raise ValueError, "Invalid symbol definition: %s" % line
+            raise ValueError("Invalid symbol definition: %s" % line)
         p = m.groupdict()
         if (p['symbol'] and p['ver']):
             self.add_symbol(self.dynamic_symbols, p);
@@ -690,7 +693,7 @@ class DwarfdumpParser(Parser):
 
     class Unit(object):
         def __init__(self):
-            self.cache = Cache(enabled=Config.dwarfcache_enabled, \
+            self.cache = Cache(enabled=Config.dwarfcache_enabled,
                     stats=DwarfdumpParser.tagcache_stats)
             self.incomplete = Cache()
             self.tags = {}
@@ -717,7 +720,8 @@ class DwarfdumpParser(Parser):
             try:
                 return self.args[name]
             except KeyError:
-                raise KeyError, "Argument '%s' not found in %s: %s" % (name, self, self.args)
+                raise KeyError("Argument '%s' not found in %s: %s" %
+                        (name, self, self.args))
 
         def optarg(self, a, default):
             try:
@@ -748,7 +752,7 @@ class DwarfdumpParser(Parser):
         if line == '.debug_info':
             self.parser = self.parse_debuginfo
         else:
-            raise ValueError, "Invalid dwarfdump header: %s" % line
+            raise ValueError("Invalid dwarfdump header: %s" % line)
 
     def parse_argvalue(self, args):
         assert args.startswith('<')
@@ -769,7 +773,8 @@ class DwarfdumpParser(Parser):
     def parse_arg(self, tag, args):
         m = self.re_argname.match(args)
         if not m:
-            raise ValueError, "Invalid dwarfdump: couldn't parse arguments: %s" % args
+            raise ValueError("Invalid dwarfdump: couldn't parse arguments: %s" %
+                    args)
         argname = m.group('arg')
         args = args[len(argname):]
         value = []
@@ -785,7 +790,7 @@ class DwarfdumpParser(Parser):
     def parse_debuginfo(self, line):
         m = self.re_header.match(line)
         if not m:
-            raise ValueError, "Invalid dwarfdump: %s" % line
+            raise ValueError("Invalid dwarfdump: %s" % line)
         if m.group('level') == '0':
             self.current_unit = DwarfdumpParser.Unit()
             return
@@ -798,8 +803,8 @@ class DwarfdumpParser(Parser):
                 tag.tag not in DwarfdumpParser.skip_tags:
             offset = int(tag.args['DW_AT_low_pc'], 16)
             if self.offsetmap.has_key(offset):
-                raise ValueError, "Dwarf dump parse error: " + \
-                        "symbol is aleady defined at offset 0x%x" % offset
+                raise ValueError("Dwarf dump parse error: " +
+                        "symbol is aleady defined at offset 0x%x" % offset)
             self.offsetmap[offset] = tag
         if len(self.stack) > 0:
             prev = self.stack.pop()
@@ -940,7 +945,7 @@ if __name__ == '__main__':
         Config.verbose = 1
     if opts.verbose:
         Config.verbose = opts.verbose
-    for (k, v) in ({ '_sym': Config.symbol_filter, \
+    for (k, v) in ({ '_sym': Config.symbol_filter,
             '_ver': Config.version_filter }).items():
         for a in [ 'exclude', 'include' ]:
             opt = getattr(opts, a + k)
