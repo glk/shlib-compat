@@ -36,6 +36,7 @@ class Config(object):
     dump = False
     version_filter = None
     symbol_filter = None
+    alias_prefix = None
     # misc opts
     objdump = 'objdump'
     dwarfdump = 'dwarfdump'
@@ -186,6 +187,17 @@ class CommonSymbol(object):
 
     def __repr__(self):
         return "CommonSymbol(%s, %s)" % (self.name, self.version)
+
+class SymbolAlias(object):
+    def __init__(self, alias, offset):
+        assert alias.startswith(Config.alias_prefix)
+        self.alias = alias
+        self.name = alias[len(Config.alias_prefix):]
+        self.offset = offset
+
+    def __repr__(self):
+        return "SymbolAlias(%s, 0x%x)" % (self.alias, self.offset)
+
 
 class VersionMap(object):
     def __init__(self, name):
@@ -569,6 +581,7 @@ class Shlib(object):
     def __init__(self, libfile):
         self.libfile = libfile
         self.versions = {}
+        self.alias_syms = {}
 
     def parse_objdump(self):
         objdump = ObjdumpParser(self.libfile)
@@ -585,16 +598,34 @@ class Shlib(object):
             if not self.versions.has_key(vername):
                 self.versions[vername] = VersionMap(vername)
             self.versions[vername].append(sym)
+        if Config.alias_prefix:
+            for p in objdump.local_symbols:
+                if p['symbol'].startswith(Config.alias_prefix):
+                    alias = SymbolAlias(p['symbol'], p['offset'])
+                    if self.alias_syms.has_key(alias.name):
+                        print >> sys.stderr, "WARN: Symbol alias is already defined: %s/%s" % \
+                                (self.name, self.alias)
+                    self.alias_syms[alias.name] = alias
 
     def parse_dwarfdump(self):
         dwarfdump = DwarfdumpParser(self.libfile)
+        def lookup(sym):
+            raw = None
+            try:
+                raw = dwarfdump.offsetmap[sym.offset]
+            except:
+                try:
+                    alias = self.alias_syms[sym.name]
+                    raw = dwarfdump.offsetmap[alias.offset]
+                except:
+                    pass
+            return raw
         dwarfdump.run()
         dwarf = Dwarf(dwarfdump)
         for ver in self.versions.values():
             for sym in ver.symbols.values():
-                try:
-                    raw = dwarfdump.offsetmap[sym.offset]
-                except:
+                raw = lookup(sym);
+                if not raw:
                     print >> sys.stderr, "WARN: Symbol %s (%s) not found at offset 0x%x" % \
                             (sym.name_ver, self.libfile, sym.offset)
                     continue
@@ -636,7 +667,7 @@ class ObjdumpParser(Parser):
     re_dynamic_symbol = re.compile('(?P<offset>[0-9a-fA-F]+)\s+(?P<bind>\w+)\s+(?P<type>\w+)\s+(?P<section>[^\s]+)\s+(?P<foffset>[0-9a-fA-F]+)\s*(?P<ver>[^\s]*)\s*(?P<symbol>[^\s]*)')
 
     def __init__(self, libfile):
-        Parser.__init__(self, "%s -wT %s" % (Config.objdump, libfile))
+        Parser.__init__(self, "%s -wtT %s" % (Config.objdump, libfile))
         self.dynamic_symbols = []
         self.local_symbols = []
 
@@ -670,7 +701,8 @@ class ObjdumpParser(Parser):
             return
         m = self.re_local_symbol.match(line)
         if (not m):
-            raise ValueError("Invalid symbol definition: %s" % line)
+            return
+            #raise ValueError("Invalid symbol definition: %s" % line)
         p = m.groupdict()
         if (p['symbol'] and p['symbol'].find('@') == -1):
             self.add_symbol(self.local_symbols, p);
@@ -921,6 +953,8 @@ if __name__ == '__main__':
             version="%prog " + Config.version)
     parser.add_option('-v', '--verbose', action='count',
             help="verbose mode, may be specified several times")
+    parser.add_option('--alias-prefix', action='store',
+            help="name prefix to try for symbol alias lookup", metavar="STR")
     parser.add_option('--dump', action='store_true',
             help="dump symbol definitions")
     parser.add_option('--out-orig', action='store',
@@ -945,6 +979,8 @@ if __name__ == '__main__':
         Config.verbose = 1
     if opts.verbose:
         Config.verbose = opts.verbose
+    if opts.alias_prefix:
+        Config.alias_prefix = opts.alias_prefix
     for (k, v) in ({ '_sym': Config.symbol_filter,
             '_ver': Config.version_filter }).items():
         for a in [ 'exclude', 'include' ]:
