@@ -600,6 +600,7 @@ class Shlib(object):
                 self.versions[vername] = VersionMap(vername)
             self.versions[vername].append(sym)
         if Config.alias_prefix:
+            self.local_offsetmap = objdump.local_offsetmap
             for p in objdump.local_symbols:
                 if p['symbol'].startswith(Config.alias_prefix):
                     alias = SymbolAlias(p['symbol'], p['offset'])
@@ -616,8 +617,14 @@ class Shlib(object):
                 raw = dwarfdump.offsetmap[sym.offset]
             except:
                 try:
-                    alias = self.alias_syms[sym.name]
-                    raw = dwarfdump.offsetmap[alias.offset]
+                    localnames = self.local_offsetmap[sym.offset]
+                    localnames.sort(key=lambda x: -len(x))
+                    for localname in localnames:
+                        if not self.alias_syms.has_key(localname):
+                            continue
+                        alias = self.alias_syms[localname]
+                        raw = dwarfdump.offsetmap[alias.offset]
+                        break
                 except:
                     pass
             return raw
@@ -671,16 +678,22 @@ class ObjdumpParser(Parser):
         Parser.__init__(self, "%s -wtT %s" % (Config.objdump, libfile))
         self.dynamic_symbols = []
         self.local_symbols = []
+        self.local_offsetmap = {}
 
     def parse_begin(self, line):
         self.parse_header(line)
 
-    def add_symbol(self, table, symbol):
+    def add_symbol(self, table, symbol, offsetmap = None):
         offset = int(symbol['offset'], 16);
         symbol['offset'] = offset
         if (offset == 0):
             return
         table.append(symbol)
+        if offsetmap != None:
+            if not offsetmap.has_key(offset):
+                offsetmap[offset] = [symbol['symbol']]
+            else:
+                offsetmap[offset].append(symbol['symbol'])
 
     def parse_header(self, line):
         m = self.re_header.match(line)
@@ -706,7 +719,7 @@ class ObjdumpParser(Parser):
             #raise ValueError("Invalid symbol definition: %s" % line)
         p = m.groupdict()
         if (p['symbol'] and p['symbol'].find('@') == -1):
-            self.add_symbol(self.local_symbols, p);
+            self.add_symbol(self.local_symbols, p, self.local_offsetmap);
 
     def parse_dynamic(self, line):
         if (self.parse_header(line)):
