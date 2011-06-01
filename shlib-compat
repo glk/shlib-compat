@@ -889,20 +889,29 @@ def common_symbols(origlib, newlib):
         print 'Removed version:     ', vername
         print '    Removed symbols: ', \
                 names_ver_str(vername, origlib.versions[vername].names())
+    added = []
+    removed = []
     for vername in verdiff.common:
         origver = origlib.versions[vername]
         newver = newlib.versions[vername]
         namediff = ListDiff(origver.names(), newver.names())
-        if namediff.added or namediff.removed:
-            print 'Added symbols:    ', \
-                    names_ver_str(vername, namediff.added)
-            print 'Removed symbols:  ', \
-                    names_ver_str(vername, namediff.removed)
+        if namediff.added:
+            added.append(names_ver_str(vername, namediff.added))
+        if namediff.removed:
+            removed.append(names_ver_str(vername, namediff.removed))
         commonver = VersionMap(vername)
         result.append(commonver)
         for n in namediff.common:
             sym = CommonSymbol(origver.symbols[n], newver.symbols[n])
             commonver.append(sym)
+    if added:
+        print 'Added symbols:'
+        for i in added:
+            print '    ', i
+    if removed:
+        print 'Removed symbols:'
+        for i in removed:
+            print '    ', i
     return result
 
 def cmp_symbols(commonver):
