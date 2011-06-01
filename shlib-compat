@@ -34,6 +34,7 @@ class Config(object):
     # controlled by user
     verbose = 0
     dump = False
+    no_dump = False
     version_filter = None
     symbol_filter = None
     alias_prefix = None
@@ -929,7 +930,7 @@ def cmp_symbols(commonver):
             if Config.verbose >= 1 or not match:
                 print '%s: definitions %smatch' % \
                         (sym.origsym.name_ver, "" if match else "mis")
-                if Config.dump and not match:
+                if Config.dump or (not match and not Config.no_dump):
                     for x in [(sym.origsym, Config.origfile),
                             (sym.newsym, Config.newfile)]:
                         xsym = x[0]
@@ -989,6 +990,8 @@ if __name__ == '__main__':
             help="name prefix to try for symbol alias lookup", metavar="STR")
     parser.add_option('--dump', action='store_true',
             help="dump symbol definitions")
+    parser.add_option('--no-dump', action='store_true',
+            help="disable dump for mismatched symbols")
     parser.add_option('--out-orig', action='store',
             help="result output file for original library", metavar="ORIGFILE")
     parser.add_option('--out-new', action='store',
@@ -1006,8 +1009,12 @@ if __name__ == '__main__':
         Config.origfile.init(opts.out_orig)
     if opts.out_new:
         Config.newfile.init(opts.out_new)
+    if opts.no_dump:
+        Config.dump = False
+        Config.no_dump = True
     if opts.dump:
         Config.dump = True
+        Config.no_dump = False
         Config.verbose = 1
     if opts.verbose:
         Config.verbose = opts.verbose

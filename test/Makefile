@@ -13,7 +13,7 @@ prove: all
 	prove ${.CURDIR}
 
 regress.sh:
-	echo 'run() { ../shlib-compat -vv libtest$$1/libtest$$1.so.0 libtest$$2/libtest$$2.so.0; }' > ${.TARGET}
+	echo 'run() { ../shlib-compat --no-dump -vv libtest$$1/libtest$$1.so.0 libtest$$2/libtest$$2.so.0; }' > ${.TARGET}
 	N=`expr ${NUMTEST} \* ${NUMTEST}`; echo "echo 1..$$N" >> ${.TARGET}
 	echo 'REGRESSION_START($$1)' >> ${.TARGET}
 	for a in `jot ${NUMTEST}`; do for b in `jot ${NUMTEST}`; do echo "REGRESSION_TEST(\`$$a-$$b', \`run $$a $$b')"; done; done >> ${.TARGET}
