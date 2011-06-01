@@ -264,8 +264,9 @@ class Def(object):
             if ind != 0:
                 Dwarf.cmpcache.put(ind, r)
         else:
-            raise RuntimeError('Comparing different classes: %s, %s' %
-                    (a.__class__.__name__, b.__class__.__name__))
+            r = 0
+            #raise RuntimeError('Comparing different classes: %s, %s' %
+            #        (a.__class__.__name__, b.__class__.__name__))
         return r
 
     def __repr__(self):
