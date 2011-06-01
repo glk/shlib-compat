@@ -907,6 +907,10 @@ def cmp_symbols(commonver):
                             (sym.newsym, Config.newfile)]:
                         xsym = x[0]
                         xout = x[1].out
+                        if not xsym.definition:
+                            print >> xout, '\n// Definition not found: %s %s' % \
+                                    (xsym.name_ver, xsym.lib.libfile)
+                            continue
                         print >> xout, '\n// Definitions mismatch: %s %s' % \
                                 (xsym.name_ver, xsym.lib.libfile)
                         pp = PrettyPrinter()
