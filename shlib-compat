@@ -37,7 +37,7 @@ class Config(object):
     no_dump = False
     version_filter = None
     symbol_filter = None
-    alias_prefix = None
+    alias_prefixes = []
     # misc opts
     objdump = 'objdump'
     dwarfdump = 'dwarfdump'
@@ -193,10 +193,10 @@ class CommonSymbol(object):
         return "CommonSymbol(%s, %s)" % (self.name, self.version)
 
 class SymbolAlias(object):
-    def __init__(self, alias, offset):
-        assert alias.startswith(Config.alias_prefix)
+    def __init__(self, alias, prefix, offset):
+        assert alias.startswith(prefix)
         self.alias = alias
-        self.name = alias[len(Config.alias_prefix):]
+        self.name = alias[len(prefix):]
         self.offset = offset
 
     def __repr__(self):
@@ -603,11 +603,13 @@ class Shlib(object):
             if not self.versions.has_key(vername):
                 self.versions[vername] = VersionMap(vername)
             self.versions[vername].append(sym)
-        if Config.alias_prefix:
+        if Config.alias_prefixes:
             self.local_offsetmap = objdump.local_offsetmap
             for p in objdump.local_symbols:
-                if p['symbol'].startswith(Config.alias_prefix):
-                    alias = SymbolAlias(p['symbol'], p['offset'])
+                for prefix in Config.alias_prefixes:
+                    if not p['symbol'].startswith(prefix):
+                        continue
+                    alias = SymbolAlias(p['symbol'], prefix, p['offset'])
                     if self.alias_syms.has_key(alias.name):
                         print >> sys.stderr, "WARN: Symbol alias is already defined: %s/%s" % \
                                 (self.name, self.alias)
@@ -986,7 +988,7 @@ if __name__ == '__main__':
             version="%prog " + Config.version)
     parser.add_option('-v', '--verbose', action='count',
             help="verbose mode, may be specified several times")
-    parser.add_option('--alias-prefix', action='store',
+    parser.add_option('--alias-prefix', action='append',
             help="name prefix to try for symbol alias lookup", metavar="STR")
     parser.add_option('--dump', action='store_true',
             help="dump symbol definitions")
@@ -1019,7 +1021,8 @@ if __name__ == '__main__':
     if opts.verbose:
         Config.verbose = opts.verbose
     if opts.alias_prefix:
-        Config.alias_prefix = opts.alias_prefix
+        Config.alias_prefixes = opts.alias_prefix
+        Config.alias_prefixes.sort(key=lambda x: -len(x))
     for (k, v) in ({ '_sym': Config.symbol_filter,
             '_ver': Config.version_filter }).items():
         for a in [ 'exclude', 'include' ]:
