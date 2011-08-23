@@ -660,6 +660,9 @@ class Shlib(object):
                 sym.definition = dwarf.build(raw)
 
     def parse(self):
+        if not os.path.isfile(self.libfile):
+            print >> sys.stderr, ("No such file: %s" % self.libfile)
+            sys.exit(1)
         self.parse_objdump()
         self.parse_dwarfdump()
 
@@ -679,6 +682,10 @@ class Parser(object):
             line = line.strip()
             if (line):
                 self.parser(line)
+        err = fd.close()
+        if err:
+            print >> sys.stderr, ("Execution failed: %s" % self.proc)
+            sys.exit(2)
 
     def parse_begin(self, line):
         print(line)
