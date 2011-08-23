@@ -332,8 +332,9 @@ class PointerDef(AnonymousDef):
         return "%s*" % (t,)
 
 class BaseTypeDef(Def):
+    inttypes = ['DW_ATE_signed', 'DW_ATE_unsigned', 'DW_ATE_unsigned_char']
     def _pp(self, pp):
-        if self.encoding in ['DW_ATE_signed', 'DW_ATE_unsigned', 'DW_ATE_unsigned_char' ]:
+        if self.encoding in self.inttypes:
             sign = '' if self.encoding == 'DW_ATE_signed' else 'u'
             bits = int(self.byte_size) * 8
             return '%sint%s_t' % (sign, bits)
@@ -456,7 +457,11 @@ class UnionDef(Def):
 class MemberDef(Def):
     def _pp(self, pp):
         t = pp.run(self.type)
-        return "%s %s;" % (t, self._name_opt())
+        if self.bit_size:
+            bits = ":%s" % self.bit_size
+        else:
+            bits = ""
+        return "%s %s%s;" % (t, self._name_opt(), bits)
 
 class Dwarf(object):
 
@@ -472,6 +477,8 @@ class Dwarf(object):
         return type
 
     def build_subprogram(self, raw):
+        if raw.optname == None:
+            raw.setname('SUBPROGRAM_NONAME_' + raw.arg('low_pc'));
         params = [ self.build(x) for x in raw.nested ]
         result = self._build_optarg_type(raw)
         return FunctionDef(raw.id, raw.name, params=params, result=result)
@@ -482,7 +489,7 @@ class Dwarf(object):
         return FunctionTypeDef(raw.id, raw.optname, params=params, result=result)
 
     def build_formal_parameter(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return ParameterDef(raw.id, raw.optname, type=type)
 
     def build_pointer_type(self, raw):
@@ -491,7 +498,8 @@ class Dwarf(object):
 
     def build_member(self, raw):
         type = self.buildref(raw.unit, raw.arg('type'))
-        return MemberDef(raw.id, raw.name, type=type)
+        return MemberDef(raw.id, raw.name, type=type,
+                bit_size=raw.optarg('bit_size', None))
 
     def build_structure_type(self, raw):
         incomplete = raw.unit.incomplete.get(raw.id)
@@ -526,7 +534,7 @@ class Dwarf(object):
         return obj
 
     def build_typedef(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return TypeAliasDef(raw.id, raw.name, type=type)
 
     def build_const_type(self, raw):
@@ -534,7 +542,7 @@ class Dwarf(object):
         return ConstTypeDef(raw.id, type=type)
 
     def build_volatile_type(self, raw):
-        type = self.buildref(raw.unit, raw.arg('type'))
+        type = self._build_optarg_type(raw)
         return VolatileTypeDef(raw.id, type=type)
 
     def build_enumeration_type(self, raw):
@@ -554,7 +562,7 @@ class Dwarf(object):
     def build_subrange_type(self, raw):
         type = self.buildref(raw.unit, raw.arg('type'))
         return ArraySubrangeDef(raw.id, type=type,
-                upper_bound=raw.arg('upper_bound'))
+                upper_bound=raw.optarg('upper_bound', 0))
 
     def build_unspecified_parameters(self, raw):
         return VarArgs(raw.id)
@@ -785,6 +793,9 @@ class DwarfdumpParser(Parser):
         @property
         def optname(self):
             return self.optarg('name', None)
+
+        def setname(self, name):
+            self.args['DW_AT_name'] = name
 
         def arg(self, a):
             name = 'DW_AT_' + a
