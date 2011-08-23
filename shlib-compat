@@ -44,6 +44,9 @@ class Config(object):
     # debug
     cmpcache_enabled = True
     dwarfcache_enabled = True
+    w_alias = True
+    w_cached = False
+    w_symbol = True
 
     class FileConfig(object):
         filename = None
@@ -62,6 +65,10 @@ class Config(object):
 
 class App(object):
     result_code = 0
+
+def warn(cond, msg):
+    if cond:
+        print >> sys.stderr, "WARN: " + msg
 
 # {{{ misc
 
@@ -125,8 +132,8 @@ class Cache(object):
             if self.items.has_key(id) and obj is not self.items[id]:
                 #raise ValueError("Item is already cached: %d (%s, %s)" %
                 #        (id, self.items[id], obj))
-                print >> sys.stderr, "WARN: Item is already cached: %d (%s, %s)" % \
-                        (id, self.items[id], obj)
+                warn(Config.w_cached, "Item is already cached: %d (%s, %s)" % \
+                        (id, self.items[id], obj))
             self.items[id] = obj
 
     def replace(self, id, obj):
@@ -614,10 +621,10 @@ class Shlib(object):
                         prevalias = self.alias_syms[alias.name]
                         if alias.name != prevalias.name or \
                                 alias.offset != prevalias.offset:
-                            print >> sys.stderr, "WARN: Symbol alias is " \
+                            warn(Config.w_alias, "Symbol alias is " \
                                     "already defined: %s: %s at %08x -- %s at %08x" % \
                                     (alias.alias, alias.name,  alias.offset,
-                                            prevalias.name, prevalias.offset)
+                                            prevalias.name, prevalias.offset))
                     self.alias_syms[alias.name] = alias
 
     def parse_dwarfdump(self):
@@ -645,8 +652,8 @@ class Shlib(object):
             for sym in ver.symbols.values():
                 raw = lookup(sym);
                 if not raw:
-                    print >> sys.stderr, "WARN: Symbol %s (%s) not found at offset 0x%x" % \
-                            (sym.name_ver, self.libfile, sym.offset)
+                    warn(Config.w_symbol, "Symbol %s (%s) not found at offset 0x%x" % \
+                            (sym.name_ver, self.libfile, sym.offset))
                     continue
                 if Config.verbose >= 3:
                     print "Parsing symbol %s (%s)" % (sym.name_ver, self.libfile)
@@ -979,8 +986,8 @@ def dump_symbols(commonver):
             sym = ver.symbols[symname]
             if not sym.origsym.definition or not sym.newsym.definition:
                 # XXX
-                print >> sys.stderr, 'WARN: Missing symbol definition: %s@%s' % \
-                        (symname, ver.name)
+                warn(Config.w_symbol, 'Missing symbol definition: %s@%s' % \
+                        (symname, ver.name))
                 continue
             d_orig.run(sym.origsym)
             d_new.run(sym.newsym)
@@ -1007,6 +1014,11 @@ if __name__ == '__main__':
     parser.add_option('--include-ver', action='append', metavar="RE")
     parser.add_option('--exclude-sym', action='append', metavar="RE")
     parser.add_option('--include-sym', action='append', metavar="RE")
+    for opt in ['alias', 'cached', 'symbol']:
+        parser.add_option("--w-" + opt,
+                action="store_true", dest="w_" + opt)
+        parser.add_option("--w-no-" + opt,
+                action="store_false", dest="w_" + opt)
     (opts, args) = parser.parse_args()
 
     if len(args) != 2:
@@ -1036,6 +1048,11 @@ if __name__ == '__main__':
                 getattr(v, a).extend(opt)
     Config.version_filter.compile()
     Config.symbol_filter.compile()
+    for w in ['w_alias', 'w_cached', 'w_symbol']:
+        if hasattr(opts, w):
+            v = getattr(opts, w)
+            if v != None:
+                setattr(Config, w, v)
 
     (Config.origfile.filename, Config.newfile.filename) = (args[0], args[1])
 
