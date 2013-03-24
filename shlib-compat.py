@@ -816,6 +816,7 @@ class DwarfdumpParser(Parser):
 
     re_header = re.compile('<(?P<level>\d+)><(?P<id>\d+\+*\d*)><(?P<tag>\w+)>')
     re_argname = re.compile('(?P<arg>\w+)<')
+    re_argunknown = re.compile('<Unknown AT value \w+><[^<>]+>')
 
     skip_tags = set([
         'DW_TAG_lexical_block',
@@ -855,8 +856,12 @@ class DwarfdumpParser(Parser):
     def parse_arg(self, tag, args):
         m = self.re_argname.match(args)
         if not m:
-            raise ValueError("Invalid dwarfdump: couldn't parse arguments: %s" %
-                    args)
+            m = self.re_argunknown.match(args)
+            if not m:
+                raise ValueError("Invalid dwarfdump: couldn't parse arguments: %s" %
+                        args)
+            args = args[len(m.group(0)):].lstrip()
+            return args
         argname = m.group('arg')
         args = args[len(argname):]
         value = []
