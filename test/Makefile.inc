@@ -1,4 +1,4 @@
-SHLIB=		test${TESTNUM}
+LIB=		test${TESTNUM}
 SHLIB_MAJOR=	0
 
 SRCS+=		test.c
