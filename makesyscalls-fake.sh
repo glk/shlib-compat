@@ -52,6 +52,7 @@ s/\$//g
 		printf "#include <sys/thr.h>\n"
 		printf "#include <sys/time.h>\n"
 		printf "#include <sys/timex.h>\n"
+		printf "#include <sys/timeffc.h>\n"
 		printf "#include <sys/ucontext.h>\n"
 		printf "#include <sys/utsname.h>\n"
 		printf "#include <sys/uuid.h>\n"
@@ -68,16 +69,20 @@ s/\$//g
 		printf "#endif\n"
 		printf "#include <sys/umtx.h>\n"
 		printf "\n"
+		# existing compat shims
+		printf "struct ostat;\n"
+		printf "struct nstat;\n"
 		printf "struct ostatfs;\n"
 		printf "struct osigaction;\n"
 		printf "struct osigcontext;\n"
-		printf "struct ucontext4;\n"
 		printf "struct oaiocb;\n"
-		printf "struct msqid_ds_old;\n"
-		printf "struct shmid_ds_old;\n"
-		printf "struct sctp_sndrcvinfo;\n"
 		printf "union semun_old;\n"
 		printf "typedef unsigned int osigset_t;\n"
+		printf "struct msqid_ds_old;\n"
+		printf "struct shmid_ds_old;\n"
+		# TODO
+		printf "struct ucontext4;\n"
+		printf "struct sctp_sndrcvinfo;\n"
 		printf "\n"
 	}
 	NF < 4 || $1 !~ /^[0-9]+$/ {
