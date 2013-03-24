@@ -1,6 +1,6 @@
 #!/bin/sh -e
 
-SHLIB_COMPAT=$(dirname $0)/shlib-compat
+SHLIB_COMPAT=$(dirname $0)/shlib-compat.py
 
 if [ $# -lt 3 ]; then
 	echo "Usage: $0 orig-dir new-dir output-dir"

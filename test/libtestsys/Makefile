@@ -11,7 +11,7 @@ CFLAGS+=-I/usr/src/lib/libc/amd64
 .include <bsd.lib.mk>
 
 test.c:
-	sh ${.CURDIR}/../makesyscalls-fake.sh /usr/src/sys/kern/syscalls.master > ${.TARGET}
+	sh ${.CURDIR}/../../makesyscalls-fake.sh /usr/src/sys/kern/syscalls.master > ${.TARGET}
 
 ${ASMSRCS}:
 	printf '#include "SYS.h"\nRSYSCALL(${.PREFIX})\n' >> ${.TARGET}
