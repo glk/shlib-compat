@@ -11,7 +11,9 @@ Syscalls in libc are implemented as assembly stubs and thus have no
 debugging symbols attached. To enable sysfake stubs rebuild libc
 adding the following to /etc/make.conf:
 
-LIBC_EXTRAMK=/usr/src/tools/tools/shlib-compat/Makefile.sysfake
+.if ${.CURDIR:M/usr/src/lib/libc}
+.include "../../tools/tools/shlib-compat/Makefile.sysfake"
+.endif
 
 To compare libc.so versions compiled with sysfake stubs:
 ./shlib-compat.py -v --alias-prefix __sysfake_ \
