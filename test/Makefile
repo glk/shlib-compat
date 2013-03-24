@@ -1,6 +1,7 @@
 SUBDIR=	libtest1 \
 	libtest2 \
-	libtest3
+	libtest3 \
+	libtestsys
 
 NUMTEST=3
 

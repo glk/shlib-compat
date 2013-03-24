@@ -1,17 +1,9 @@
 TESTNUM=	sys
 
-ASMSRCS= mknod.S chmod.S stat.S
-
-SRCS+= ${ASMSRCS}
-CLEANFILES+= ${ASMSRCS} test.c
-
-CFLAGS+=-I/usr/src/lib/libc/amd64
+CLEANFILES+= test.c
 
 .include <../Makefile.inc>
 .include <bsd.lib.mk>
 
-test.c:
+test.c: ../../makesyscalls-fake.sh
 	sh ${.CURDIR}/../../makesyscalls-fake.sh /usr/src/sys/kern/syscalls.master > ${.TARGET}
-
-${ASMSRCS}:
-	printf '#include "SYS.h"\nRSYSCALL(${.PREFIX})\n' >> ${.TARGET}
