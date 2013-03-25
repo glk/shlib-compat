@@ -1,3 +1,6 @@
+#!/bin/sh
+# $FreeBSD$
+
 run() { ../shlib-compat.py --no-dump -vv libtest$1/libtest$1.so.0.debug libtest$2/libtest$2.so.0.debug; }
 echo 1..9
 REGRESSION_START($1)
