@@ -418,6 +418,11 @@ class ParameterDef(Def):
         t = pp.run(self.type)
         return "%s %s" % (t, self._name_opt())
 
+class VariableDef(Def):
+    def _pp(self, pp):
+        t = pp.run(self.type)
+        return "%s %s" % (t, self._name_opt())
+
 # TODO
 class StructForwardDef(Def):
     pass
@@ -491,6 +496,10 @@ class Dwarf(object):
         params = [ self.build(x) for x in raw.nested ]
         result = self._build_optarg_type(raw)
         return FunctionDef(raw.id, raw.name, params=params, result=result)
+
+    def build_variable(self, raw):
+        type = self._build_optarg_type(raw)
+        return VariableDef(raw.id, raw.optname, type=type)
 
     def build_subroutine_type(self, raw):
         params = [ self.build(x) for x in raw.nested ]
@@ -838,6 +847,10 @@ class DwarfdumpParser(Parser):
         'DW_TAG_variable',
         ])
 
+    external_tags = set([
+        'DW_TAG_variable',
+        ])
+
     def __init__(self, libfile):
         Parser.__init__(self, "%s -di %s" % (Config.dwarfdump, libfile))
         self.current_unit = None
@@ -899,9 +912,19 @@ class DwarfdumpParser(Parser):
         while args:
             args = self.parse_arg(tag, args)
         tag.unit.tags[tag.id] = tag
-        if tag.args.has_key('DW_AT_low_pc') and \
-                tag.tag not in DwarfdumpParser.skip_tags:
-            offset = int(tag.args['DW_AT_low_pc'], 16)
+        def parse_offset(tag):
+            if tag.args.has_key('DW_AT_low_pc'):
+                return int(tag.args['DW_AT_low_pc'], 16)
+            elif tag.args.has_key('DW_AT_location'):
+                location = tag.args['DW_AT_location']
+                if location.startswith('DW_OP_addr'):
+                    return int(location.replace('DW_OP_addr', ''), 16)
+            return None
+        offset = parse_offset(tag)
+        if offset is not None and \
+                (tag.tag not in DwarfdumpParser.skip_tags or \
+                (tag.args.has_key('DW_AT_external') and \
+                tag.tag in DwarfdumpParser.external_tags)):
             if self.offsetmap.has_key(offset):
                 raise ValueError("Dwarf dump parse error: " +
                         "symbol is aleady defined at offset 0x%x" % offset)
