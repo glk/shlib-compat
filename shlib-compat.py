@@ -60,6 +60,14 @@ class Config(object):
     origfile = FileConfig()
     newfile = FileConfig()
 
+    exclude_sym_default = [
+            '^__bss_start$',
+            '^_edata$',
+            '^_end$',
+            '^_fini$',
+            '^_init$',
+            ]
+
     @classmethod
     def init(cls):
         cls.version_filter = StrFilter()
@@ -1082,6 +1090,8 @@ if __name__ == '__main__':
     parser.add_option('--include-ver', action='append', metavar="RE")
     parser.add_option('--exclude-sym', action='append', metavar="RE")
     parser.add_option('--include-sym', action='append', metavar="RE")
+    parser.add_option('--no-exclude-sym-default', action='store_true',
+            help="don't exclude special symbols like _init, _end, __bss_start")
     for opt in ['alias', 'cached', 'symbol']:
         parser.add_option("--w-" + opt,
                 action="store_true", dest="w_" + opt)
@@ -1118,6 +1128,8 @@ if __name__ == '__main__':
             opt = getattr(opts, a + k)
             if opt:
                 getattr(v, a).extend(opt)
+    if not opts.no_exclude_sym_default:
+        Config.symbol_filter.exclude.extend(Config.exclude_sym_default)
     Config.version_filter.compile()
     Config.symbol_filter.compile()
     for w in ['w_alias', 'w_cached', 'w_symbol']:
