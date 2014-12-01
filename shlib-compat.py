@@ -997,10 +997,15 @@ def cmp_symbols(commonver):
         names.sort()
         for symname in names:
             sym = ver.symbols[symname]
-            match = sym.origsym.definition == sym.newsym.definition
+            missing = sym.origsym.definition is None or sym.newsym.definition is None
+            match = not missing and sym.origsym.definition == sym.newsym.definition
             if not match:
                 App.result_code = 1
             if Config.verbose >= 1 or not match:
+                if missing:
+                    print '%s: missing definition' % \
+                            (sym.origsym.name_ver,)
+                    continue
                 print '%s: definitions %smatch' % \
                         (sym.origsym.name_ver, "" if match else "mis")
                 if Config.dump or (not match and not Config.no_dump):
