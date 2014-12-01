@@ -338,15 +338,17 @@ class BaseTypeDef(Def):
     def _pp(self, pp):
         if self.encoding in self.inttypes:
             sign = '' if self.encoding == 'DW_ATE_signed' else 'u'
-            bits = int(self.byte_size) * 8
+            bits = int(self.byte_size, 0) * 8
             return '%sint%s_t' % (sign, bits)
-        elif self.encoding == 'DW_ATE_signed_char' and int(self.byte_size) == 1:
+        elif self.encoding == 'DW_ATE_signed_char' and int(self.byte_size, 0) == 1:
             return 'char';
+        elif self.encoding == 'DW_ATE_boolean' and int(self.byte_size, 0) == 1:
+            return 'bool';
         elif self.encoding == 'DW_ATE_float':
-            return self._mapval(self.byte_size, {
-                '16': 'long double',
-                '8': 'double',
-                '4': 'float',
+            return self._mapval(int(self.byte_size, 0), {
+                16: 'long double',
+                8: 'double',
+                4: 'float',
             })
         raise NotImplementedError('Invalid encoding: %s' % self)
 
@@ -373,6 +375,11 @@ class VolatileTypeDef(AnonymousDef):
     _is_alias = True
     def _pp(self, pp):
         return 'volatile ' + self.type._pp(pp)
+
+class RestrictTypeDef(AnonymousDef):
+    _is_alias = True
+    def _pp(self, pp):
+        return 'restrict ' + self.type._pp(pp)
 
 class ArrayDef(AnonymousDef):
     def _pp(self, pp):
@@ -547,6 +554,10 @@ class Dwarf(object):
         type = self._build_optarg_type(raw)
         return VolatileTypeDef(raw.id, type=type)
 
+    def build_restrict_type(self, raw):
+        type = self._build_optarg_type(raw)
+        return RestrictTypeDef(raw.id, type=type)
+
     def build_enumeration_type(self, raw):
         # TODO handle DW_TAG_enumerator ???
         return EnumerationTypeDef(raw.id, name=raw.optname,
@@ -574,7 +585,7 @@ class Dwarf(object):
             return int(id)
         except ValueError:
             if (id.startswith('<') and id.endswith('>')):
-                return int(id[1:-1])
+                return int(id[1:-1], 0)
             else:
                 raise ValueError("Invalid dwarf id: %s" % id)
 
@@ -782,7 +793,7 @@ class DwarfdumpParser(Parser):
     class Tag(object):
         def __init__(self, unit, data):
             self.unit = unit
-            self.id = int(data['id'])
+            self.id = int(data['id'], 0)
             self.level = int(data['level'])
             self.tag = data['tag']
             self.args = {}
@@ -816,7 +827,7 @@ class DwarfdumpParser(Parser):
         def __repr__(self):
             return "Tag(%d, %d, %s)" % (self.level, self.id, self.tag)
 
-    re_header = re.compile('<(?P<level>\d+)><(?P<id>\d+\+*\d*)><(?P<tag>\w+)>')
+    re_header = re.compile('<(?P<level>\d+)><(?P<id>[0xX0-9a-fA-F]+(?:\+(0[xX])?[0-9a-fA-F]+)?)><(?P<tag>\w+)>')
     re_argname = re.compile('(?P<arg>\w+)<')
     re_argunknown = re.compile('<Unknown AT value \w+><[^<>]+>')
 
@@ -1035,6 +1046,10 @@ if __name__ == '__main__':
             help="result output file for original library", metavar="ORIGFILE")
     parser.add_option('--out-new', action='store',
             help="result output file for new library", metavar="NEWFILE")
+    parser.add_option('--dwarfdump', action='store',
+            help="path to dwarfdump executable", metavar="DWARFDUMP")
+    parser.add_option('--objdump', action='store',
+            help="path to objdump executable", metavar="OBJDUMP")
     parser.add_option('--exclude-ver', action='append', metavar="RE")
     parser.add_option('--include-ver', action='append', metavar="RE")
     parser.add_option('--exclude-sym', action='append', metavar="RE")
@@ -1049,6 +1064,10 @@ if __name__ == '__main__':
     if len(args) != 2:
         parser.print_help()
         sys.exit(-1)
+    if opts.dwarfdump:
+        Config.dwarfdump = opts.dwarfdump
+    if opts.objdump:
+        Config.objdump = opts.objdump
     if opts.out_orig:
         Config.origfile.init(opts.out_orig)
     if opts.out_new:
